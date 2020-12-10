@@ -106,7 +106,6 @@ function block_cg!(X, A, P, B, U, C; maxiters = 10, tol=1e-8)
     # B = B - A * X
     mul!(B, A, X, -1.0, 1.0)
 
-    rs = zeros(n)
     ρs = ones(n)
     ρs_old = ones(n)
     σs = zeros(n)
@@ -124,13 +123,15 @@ function block_cg!(X, A, P, B, U, C; maxiters = 10, tol=1e-8)
         # we could also check ρs, which is the residual norm in the
         # P⁻¹-inner product, but if P is nearly singular it might not be a
         # great norm.
-        for i = 1:num_unconverged
-            rs[i] = norm(view(B, :, i))
+        ldiv!(view(C, :, OneTo(num_unconverged)), P, view(B, :, OneTo(num_unconverged)))
+        ρs_old[OneTo(num_unconverged)] .= view(ρs, OneTo(num_unconverged))
 
-            push!(residual_history[ids[i]], rs[i])
+        for i = 1:num_unconverged
+            ρs[i] = dot(view(C, :, i), view(B, :, i))
+            push!(residual_history[ids[i]], sqrt(ρs[i]))
         end
 
-        not_converged = [i for (i, v) in enumerate(view(rs, OneTo(num_unconverged))) if v > tol]
+        not_converged = [i for (i, v) in enumerate(view(ρs, OneTo(num_unconverged))) if v > tol^2]
 
         num_unconverged = length(not_converged)
 
@@ -143,18 +144,12 @@ function block_cg!(X, A, P, B, U, C; maxiters = 10, tol=1e-8)
         # Todo, repacking
         repack!(ids, not_converged)
         repack!(U, not_converged)
+        repack!(C, not_converged)
         repack!(B, not_converged)
         repack!(A, not_converged)
         repack!(P, not_converged)
         repack!(ρs, not_converged)
-
-        ldiv!(view(C, :, OneTo(num_unconverged)), P, view(B, :, OneTo(num_unconverged)))
-
-        ρs_old[OneTo(num_unconverged)] .= view(ρs, OneTo(num_unconverged))
-
-        for i = 1:num_unconverged
-            ρs[i] = dot(view(C, :, i), view(B, :, i))
-        end
+        repack!(ρs_old, not_converged)
 
         # In the first iteration we have U == 0, so no need for an axpy.
         if iter == 1
