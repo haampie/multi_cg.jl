@@ -123,8 +123,9 @@ function block_cg!(X, A, P, B, U, C; maxiters = 10, tol=1e-8)
         # we could also check ρs, which is the residual norm in the
         # P⁻¹-inner product, but if P is nearly singular it might not be a
         # great norm.
-        ldiv!(view(C, :, OneTo(num_unconverged)), P, view(B, :, OneTo(num_unconverged)))
-        ρs_old[OneTo(num_unconverged)] .= view(ρs, OneTo(num_unconverged))
+        active = OneTo(num_unconverged)
+        @views ldiv!(C[:, active], P, B[:, active])
+        @views copyto!(ρs_old[active], ρs[active])
 
         for i = 1:num_unconverged
             ρs[i] = dot(view(C, :, i), view(B, :, i))
@@ -134,14 +135,11 @@ function block_cg!(X, A, P, B, U, C; maxiters = 10, tol=1e-8)
         not_converged = [i for (i, v) in enumerate(view(ρs, OneTo(num_unconverged))) if v > tol^2]
 
         num_unconverged = length(not_converged)
+        active = OneTo(num_unconverged)
 
-        @info "CG iteration $iter" num_unconverged
+        isempty(not_converged) && break
 
-        if length(not_converged) == 0
-            break
-        end
-
-        # Todo, repacking
+        # Move everything contiguously to the front.
         repack!(ids, not_converged)
         repack!(U, not_converged)
         repack!(C, not_converged)
@@ -153,23 +151,24 @@ function block_cg!(X, A, P, B, U, C; maxiters = 10, tol=1e-8)
 
         # In the first iteration we have U == 0, so no need for an axpy.
         if iter == 1
-            copyto!(view(U, :, OneTo(num_unconverged)), view(C, :, OneTo(num_unconverged)))
+            @views copyto!(U[:, active], C[:, active])
         else
             for i = 1:num_unconverged
-                axpby!(1.0, view(C, :, i), ρs[i] / ρs_old[i], view(U, :, i))
+                α = ρs[i] / ρs_old[i]
+                @views axpby!(1.0, C[:, i], α, U[:, i])
             end
         end
 
-        mul!(view(C, :, OneTo(num_unconverged)), A, view(U, :, OneTo(num_unconverged)))
+        @views mul!(C[:, active], A, U[:, active])
 
         for i = 1:num_unconverged
-            σs[i] = dot(view(U, :, i), view(C, :, i))
+            @views σs[i] = dot(U[:, i], C[:, i])
         end
 
         for i = 1:num_unconverged
             α = ρs[i] / σs[i]
-            axpy!(α, view(U, :, i), view(X, :, ids[i]))
-            axpy!(-α, view(C, :, i), view(B, :, i))
+            @views axpy!(α, U[:, i], X[:, ids[i]])
+            @views axpy!(-α, C[:, i], B[:, i])
         end
     end
 
